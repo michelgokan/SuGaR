@@ -1,9 +1,14 @@
+import os
 from typing import Union
 import torch
 from pytorch3d.structures import Meshes
 from pytorch3d.renderer import RasterizationSettings as P3DRasterizationSettings
 from pytorch3d.renderer import MeshRasterizer as P3DMeshRasterizer
 try:
+    # Ensure the NVDIFRAST_BACKEND is set to 'PACKED' if using the CUDA rasterizer
+    if os.environ.get('NVDIFRAST_CUDA_RASTERIZER', '0') in ('1', 'True', 'true'):
+        os.environ.setdefault('NVDIFRAST_BACKEND', 'PACKED')
+
     from .nvdiffrast import nvdiff_rasterization, dr
     nvdiffrast_available = True
 except ImportError:
@@ -97,9 +102,14 @@ class MeshRasterizer(torch.nn.Module):
         
         else:
             raise ValueError("cameras must be either CamerasWrapper, P3DCameras, GSCamera or list of GSCamera")
-        
+
         if self.use_nvdiffrast:
-            self.gl_context = dr.RasterizeGLContext()
+            self.use_cuda_rasterizer = os.environ.get('NVDIFRAST_CUDA_RASTERIZER', '0') in ('1', 'True', 'true')
+
+            if self.use_cuda_rasterizer:
+                self.gl_context = dr.RasterizeCudaContext()
+            else:
+                self.gl_context = dr.RasterizeGLContext()
         else:
             self._p3d_mesh_rasterizer = P3DMeshRasterizer(
                 cameras=self.cameras.p3d_cameras,
@@ -137,7 +147,7 @@ class MeshRasterizer(torch.nn.Module):
             height, width = render_camera.image_height, render_camera.image_width
             bary_coords, zbuf, pix_to_face = nvdiff_rasterization(
                 camera=render_camera,
-                image_height=height, 
+                image_height=height,
                 image_width=width,
                 mesh=mesh,
                 return_indices_only=False,
